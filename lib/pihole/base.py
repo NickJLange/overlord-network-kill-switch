@@ -71,7 +71,10 @@ class BaseHTTPHandler(BaseModel):
             try:
                 self.sessions[pi] = requests.Session()
                 furl = "https://" + str(pi) + url
-                logger.debug(f"'{furl}' with '{pArgs}'")
+                pArgs_sanitized = dict(pArgs)
+                if "pw" in pArgs_sanitized:
+                    pArgs_sanitized["pw"] = "***"
+                logger.debug(f"'{furl}' with '{pArgs_sanitized}'")
                 resp = self.sessions[pi].post(furl, data=pArgs, verify=True)
                 resp.raise_for_status()
                 logger.debug(self.sessions[pi].cookies)
