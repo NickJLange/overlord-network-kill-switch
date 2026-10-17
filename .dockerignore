@@ -1,0 +1,12 @@
+# Only send runtime sources, dependency metadata, and the selected config.
+**
+!pyproject.toml
+!uv.lock
+!cgi-bin/
+!cgi-bin/*.py
+!lib/
+!lib/**
+!etc/
+!etc/config.ini
+**/__pycache__/
+**/*.pyc

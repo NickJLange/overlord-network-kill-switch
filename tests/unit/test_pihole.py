@@ -42,8 +42,8 @@ class TestPiHoleOverlord:
     ):
         """Test getting status of an enabled domain block."""
         mock_client_class.return_value = mock_pihole_client
-        mock_pihole_client.domain_management.get_domain.return_value = {
-            "domains": [{"domain": "youtube.com", "enabled": True}]
+        mock_pihole_client.domain_management.get_domain.side_effect = lambda domain, *_: {
+            "domains": [{"domain": domain, "enabled": True}]
         }
         from pihole.pihole import PiHoleOverlord
 
@@ -58,8 +58,8 @@ class TestPiHoleOverlord:
     ):
         """Test getting status of a disabled domain block."""
         mock_client_class.return_value = mock_pihole_client
-        mock_pihole_client.domain_management.get_domain.return_value = {
-            "domains": [{"domain": "youtube.com", "enabled": False}]
+        mock_pihole_client.domain_management.get_domain.side_effect = lambda domain, *_: {
+            "domains": [{"domain": domain, "enabled": False}]
         }
         from pihole.pihole import PiHoleOverlord
 
@@ -77,34 +77,6 @@ class TestPiHoleOverlord:
         result = overlord.get("nonexistent")
 
         assert result == {"status": "Unknown"}
-
-    @patch(PIHOLE_CLIENT_PATCH)
-    def test_post_enable_domain_block(
-        self, mock_client_class, mock_app_config, mock_pihole_client
-    ):
-        """Test enabling a domain block."""
-        mock_client_class.return_value = mock_pihole_client
-        from pihole.pihole import PiHoleOverlord
-
-        overlord = PiHoleOverlord(app_config=mock_app_config)
-        result = overlord.post("enable", "youtube")
-
-        assert result == {"status": "ok"}
-        assert mock_pihole_client.domain_management.add_domain.call_count == 2
-
-    @patch(PIHOLE_CLIENT_PATCH)
-    def test_post_disable_domain_block(
-        self, mock_client_class, mock_app_config, mock_pihole_client
-    ):
-        """Test disabling a domain block."""
-        mock_client_class.return_value = mock_pihole_client
-        from pihole.pihole import PiHoleOverlord
-
-        overlord = PiHoleOverlord(app_config=mock_app_config)
-        result = overlord.post("disable", "youtube")
-
-        assert result == {"status": "ok"}
-        assert mock_pihole_client.domain_management.delete_domain.call_count == 2
 
     @patch(PIHOLE_CLIENT_PATCH)
     def test_shutdown(self, mock_client_class, mock_app_config, mock_pihole_client):

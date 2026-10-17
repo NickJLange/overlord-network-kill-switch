@@ -22,7 +22,7 @@
     "inputs": 0,
     "x": 120,
     "y": 120,
-    "wires": [["f8baa0e728fcffa6"]]
+    "wires": [["eef5d17a36f78509"]]
   },
   {
     "id": "d801cd64df39a731",
@@ -68,7 +68,7 @@
     "name": "Publish",
     "topic": "",
     "qos": "2",
-    "retain": "false",
+    "retain": "true",
     "respTopic": "",
     "contentType": "",
     "userProps": "",
@@ -80,27 +80,11 @@
     "wires": []
   },
   {
-    "id": "f8baa0e728fcffa6",
-    "type": "rbe",
-    "z": "8a44f6ee5126dadc",
-    "name": "",
-    "func": "rbe",
-    "gap": "",
-    "start": "",
-    "inout": "out",
-    "septopics": true,
-    "property": "payload",
-    "topi": "topic",
-    "x": 290,
-    "y": 120,
-    "wires": [["eef5d17a36f78509"]]
-  },
-  {
     "id": "f2bf547fc050a016",
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "let webserver = flow.get('endpoint');\n// Which node\n\nif (!([\"status\", \"change\"].includes(msg.verb)) || msg.target == \"\") {\n    node.warn(`ignoring ${msg.verb}`)\n    return [null, msg]\n}\n\nmsg.topic = `stat/dns_controller/media/${msg.target}/status`\nmsg.url = `${webserver}/pihole/${msg.verb}/${msg.target}`\n\nif (msg.verb == \"status\"){\n    msg.method = \"GET\"\n}\nelse if (msg.verb == \"change\")\n{\n    msg.method = \"POST\"\n    if (msg.payload == \"true\") msg.verb = \"enable\"\n    if (msg.payload == \"false\") msg.verb = \"disable\"\n    msg.url = `${webserver}/pihole/${msg.verb}/${msg.target}`\n}\n\nreturn msg;\n\n\n\n",
+    "func": "const webserver = flow.get('endpoint');\nif (!['status', 'change'].includes(msg.verb) || !msg.target) return null;\nif (msg.verb === 'change') {\n    const intent = String(msg.payload);\n    if (!['true', 'false'].includes(intent)) return null;\n    msg.verb = intent === 'true' ? 'enable' : 'disable';\n    msg.method = 'POST';\n} else {\n    msg.method = 'GET';\n}\nmsg.topic = `stat/dns_controller/media/${msg.target}/status`;\nmsg.url = `${webserver}/pihole/${msg.verb}/${encodeURIComponent(msg.target)}`;\nmsg.payload = '';\nreturn msg;\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -116,7 +100,7 @@
     "type": "mqtt in",
     "z": "8a44f6ee5126dadc",
     "name": "Media Status",
-    "topic": "stat/dns_controller/media/+/status",
+    "topic": "cmnd/dns_controller/media/+/status",
     "qos": "2",
     "datatype": "auto",
     "broker": "44ad9994.7afd",
@@ -126,44 +110,16 @@
     "inputs": 0,
     "x": 110,
     "y": 260,
-    "wires": [["104bbaa3c21039cb"]]
-  },
-  {
-    "id": "104bbaa3c21039cb",
-    "type": "rbe",
-    "z": "8a44f6ee5126dadc",
-    "name": "",
-    "func": "rbe",
-    "gap": "",
-    "start": "",
-    "inout": "out",
-    "septopics": true,
-    "property": "payload",
-    "topi": "topic",
-    "x": 270,
-    "y": 260,
     "wires": [["eef5d17a36f78509"]]
   },
   {
     "id": "b82786f78dbdb8b9",
-    "type": "change",
+    "type": "function",
     "z": "8a44f6ee5126dadc",
-    "name": "",
-    "rules": [
-      {
-        "t": "set",
-        "p": "payload",
-        "pt": "msg",
-        "to": "payload.status",
-        "tot": "msg",
-        "dc": true
-      }
-    ],
-    "action": "",
-    "property": "",
-    "from": "",
-    "to": "",
-    "reg": false,
+    "name": "Observed domain state",
+    "func": "const status = msg.payload && msg.payload.status;\nif (msg.statusCode === 200 && ['true', 'false'].includes(status)) {\n    msg.payload = status;\n} else {\n    node.warn(`DNS state unconfirmed for ${msg.topic}: HTTP ${msg.statusCode}`);\n    msg.payload = 'unknown';\n}\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
     "x": 740,
     "y": 120,
     "wires": [["5f2a033f8739bd4e", "eb1d48c75325c949"]]
@@ -183,7 +139,7 @@
     "inputs": 0,
     "x": 120,
     "y": 500,
-    "wires": [["7a253c90b9a925e5"]]
+    "wires": [["1b1d2d6b610f1596"]]
   },
   {
     "id": "e15f60cd737b56a3",
@@ -222,27 +178,11 @@
     "wires": []
   },
   {
-    "id": "7a253c90b9a925e5",
-    "type": "rbe",
-    "z": "8a44f6ee5126dadc",
-    "name": "",
-    "func": "rbe",
-    "gap": "",
-    "start": "",
-    "inout": "out",
-    "septopics": true,
-    "property": "payload",
-    "topi": "topic",
-    "x": 270,
-    "y": 500,
-    "wires": [["1b1d2d6b610f1596"]]
-  },
-  {
     "id": "53d8609db4b811ee",
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "let webserver = flow.get('endpoint');\n\n// Which node\nif (!msg.topic.includes(\"change\")){\n    node.warn(`Ignoring ${msg.topic}`)\n    return [null, msg]\n}\nlet jl = msg.topic.split('/')\nlet disable_type = jl[3]\n// dns_controller/master/short_disable\"\nnode.warn(`Looking at ${jl[3]}`)\nvar method =\"\"\n// OFF (Send to WebServer)\nlet intent = msg.payload\nlet timer = null;\nif (jl[2]=='short_change') timer = 300;\n\nif (intent == \"true\"){\n  msg.method = \"POST\";\n  method=\"disable\";\n} \nif (intent == \"false\") {\n    msg.method = \"DELETE\"\n    method=\"enable\";\n}\nmsg.intent = intent\nmsg.topic = `stat/dns_controller/master/status`\nlet temp = ''\nif (timer != null) temp = `?timer=${timer}`\nmsg.url = `${webserver}/alldns/${temp}`\nnode.warn(`calling user ${msg.url} with method ${msg.method}`)\nreturn msg;\n",
+    "func": "const webserver = flow.get('endpoint');\nconst action = msg.topic.split('/')[3];\nconst intent = String(msg.payload);\nif (!['perm_change', 'short_change'].includes(action) || !['true', 'false'].includes(intent)) return null;\n// HomeKit 'ADs On' means Pi-hole blocking is disabled.\nmsg.method = intent === 'true' ? 'POST' : 'DELETE';\nconst timer = action === 'short_change' && intent === 'true' ? '?timer=300' : '';\nmsg.topic = 'stat/dns_controller/master/status';\nmsg.url = `${webserver}/alldns/${timer}`;\nmsg.payload = '';\nreturn msg;\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -258,7 +198,7 @@
     "type": "mqtt in",
     "z": "8a44f6ee5126dadc",
     "name": "Master Status",
-    "topic": "stat/dns_controller/master/status",
+    "topic": "cmnd/dns_controller/master/status",
     "qos": "2",
     "datatype": "auto",
     "broker": "44ad9994.7afd",
@@ -268,22 +208,22 @@
     "inputs": 0,
     "x": 90,
     "y": 700,
-    "wires": [["7a8470bdfd48f69e"]]
+    "wires": [["27b4033312442b98"]]
   },
   {
-    "id": "7a8470bdfd48f69e",
-    "type": "rbe",
+    "id": "dns-master-poll",
+    "type": "inject",
     "z": "8a44f6ee5126dadc",
-    "name": "",
-    "func": "rbe",
-    "gap": "",
-    "start": "",
-    "inout": "out",
-    "septopics": true,
-    "property": "payload",
-    "topi": "topic",
-    "x": 250,
-    "y": 720,
+    "name": "Refresh master after timer expiry",
+    "props": [{"p": "payload"}],
+    "repeat": "10",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "payload": "",
+    "payloadType": "str",
+    "x": 130,
+    "y": 760,
     "wires": [["27b4033312442b98"]]
   },
   {
@@ -291,7 +231,7 @@
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "let webserver = flow.get('endpoint');\nlet jl = msg.topic.split('/')\nlet service = jl[3]\nnode.warn(`Getting Status of Looking at ${service}`)\n\n// OFF (Send to WebServer)\nlet intent = msg.payload\n\nmsg.intent = intent\nmsg.method = \"GET\"\nmsg.topic = `stat/dns_controller/master/status`\nmsg.url = `${webserver}/alldns/`\nnode.warn(`calling user ${msg.url}`)\nreturn msg;\n",
+    "func": "msg.method = 'GET';\nmsg.topic = 'stat/dns_controller/master/status';\nmsg.url = `${flow.get('endpoint')}/alldns/`;\nmsg.payload = '';\nreturn msg;\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -304,24 +244,12 @@
   },
   {
     "id": "d463172eccce26fa",
-    "type": "change",
+    "type": "function",
     "z": "8a44f6ee5126dadc",
-    "name": "",
-    "rules": [
-      {
-        "t": "set",
-        "p": "payload",
-        "pt": "msg",
-        "to": "payload.status",
-        "tot": "msg",
-        "dc": true
-      }
-    ],
-    "action": "",
-    "property": "",
-    "from": "",
-    "to": "",
-    "reg": false,
+    "name": "Observed ADs On state",
+    "func": "const status = msg.payload && msg.payload.status;\nif (msg.statusCode === 200 && ['true', 'false'].includes(status)) {\n    msg.payload = status === 'true' ? 'false' : 'true';\n} else {\n    node.warn(`DNS state unconfirmed: HTTP ${msg.statusCode}`);\n    msg.payload = 'unknown';\n}\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
     "x": 1020,
     "y": 520,
     "wires": [["0e8d714da15bb434", "eb1d48c75325c949"]]
@@ -341,7 +269,7 @@
     "inputs": 0,
     "x": 100,
     "y": 900,
-    "wires": [["4f9af4f16f17cb98"]]
+    "wires": [["f0bd60e6496e3721"]]
   },
   {
     "id": "1c70348aae6011a6",
@@ -419,7 +347,7 @@
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "let webserver = flow.get('endpoint');\n// Which node\n// Bail on anything empty or not change for this path\nif (!([\"status_rule\",\"status_device\",\"change_device\",\"change_rule\"].includes(msg.verb)) || msg.target == \"\"){\n   node.warn(`ignoring ${msg.verb}`)\n    return [null, msg]\n}\n\nvar router_path=\"\"\n\nmsg.method = \"GET\";\nif (msg.verb.includes(\"status\"))\n{\n  router_path = msg.verb\n  msg.payload =\"\"\n  node.warn(`status ${msg.verb}`)\n}\nelse if (msg.verb == \"change_device\")\n{\n  // OFF (Send to WebServer)\n  let intent = msg.payload\n  var method \n  if (intent == \"offline\"){\n    router_path=\"disable_device\";\n  } \n  if (intent == \"online\") {\n      router_path=\"enable_device\";\n  }\n}\nelse if (msg.verb == \"change_rule\") {\n  // OFF (Send to WebServer)\n  let intent = msg.payload\n  var method\n  if (intent == \"false\") {\n    router_path = \"disable_rule\";\n  }\n  if (intent == \"true\") {\n    router_path = \"enable_rule\";\n  }\n}\nelse {\n  return null;\n}\nmsg.url = `${webserver}/ubiquiti/${router_path}/${msg.target}`\nmsg.topic = `stat/router_controller/status/${msg.target}`\nnode.warn(`Looking at ${msg.verb} vs ${router_path} for ${msg.target} at ${msg.topic}`)\nreturn msg;\n",
+    "func": "const webserver = flow.get('endpoint');\nif (typeof msg.target !== 'string' || !msg.target || !['status_rule', 'status_device', 'change_device', 'change_rule'].includes(msg.verb)) {\n    node.error('Invalid router target or verb', msg);\n    return null;\n}\nlet router_path;\nif (msg.verb.startsWith('status_')) {\n    router_path = msg.verb;\n} else if (msg.verb === 'change_rule') {\n    // ON enables the configured rule: use ALLOW rules for access exceptions.\n    if (msg.payload === true || msg.payload === 'true') router_path = 'enable_rule';\n    if (msg.payload === false || msg.payload === 'false') router_path = 'disable_rule';\n} else {\n    if (msg.payload === 'online') router_path = 'enable_device';\n    if (msg.payload === 'offline') router_path = 'disable_device';\n}\nif (!router_path) {\n    node.error('Invalid router command; no request sent', msg);\n    return null;\n}\nmsg.method = 'GET';\nmsg.payload = '';\nmsg.url = `${webserver}/ubiquiti/${router_path}/${encodeURIComponent(msg.target)}`;\nmsg.topic = `stat/router_controller/status/${msg.target}`;\nreturn msg;\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -526,7 +454,7 @@
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "\nif (msg.statusCode == 200)\n{\n  node.warn(`HTTP Response of Payload ${msg.payload.status}`)\n}\n\nreturn {\"payload\": msg.payload.status,\n  \"topic\": `stat/router_controller/status_rule/${msg.target}`};\n\n",
+    "func": "const status = msg.payload && msg.payload.status;\nconst isRule = ['status_rule', 'change_rule'].includes(msg.verb);\nconst valid = isRule ? typeof status === 'boolean' : ['online', 'offline'].includes(status);\nif (msg.statusCode !== 200 || !valid) {\n    node.error('UniFi state unconfirmed; not publishing a switch state', msg);\n    return null;\n}\nreturn {payload: status, topic: `stat/router_controller/status_rule/${msg.target}`};\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,

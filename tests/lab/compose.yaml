@@ -1,0 +1,83 @@
+name: overlord-lab
+services:
+  mqtt:
+    image: eclipse-mosquitto:2.0.21
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports: ["127.0.0.1:18883:1883"]
+    healthcheck:
+      test: [CMD, mosquitto_pub, -h, localhost, -t, lab/health, -m, ready]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  pihole:
+    image: pihole/pihole:2025.04.0
+    # Seed the shipped schema so first boot needs no DNS/adlist download.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s /etc/pihole/gravity.db ]; then
+          pihole-FTL sqlite3 -ni /etc/pihole/gravity.db < /etc/.pihole/advanced/Templates/gravity.db.sql
+          pihole-FTL sqlite3 /etc/pihole/gravity.db "INSERT OR REPLACE INTO info (property,value) VALUES ('updated',strftime('%s','now')),('gravity_count',0);"
+          chown pihole:pihole /etc/pihole/gravity.db
+        fi
+        touch /etc/pihole/adlists.list
+        exec /usr/bin/start.sh
+    environment:
+      FTLCONF_webserver_api_password: local-pihole-only
+      FTLCONF_dns_listeningMode: ALL
+      FTLCONF_misc_etc_dnsmasq_d: "false"
+    ports: ["127.0.0.1:18080:80"]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1/admin/login]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  unifi:
+    image: overlord-lab:local
+    build:
+      context: ../..
+      dockerfile: tests/lab/Containerfile
+    command: [uvicorn, unifi_sim:app, --app-dir, /sim, --host, 0.0.0.0, --port, "8443", --ssl-keyfile, /certs/key.pem, --ssl-certfile, /certs/cert.pem]
+    volumes:
+      - ../../.amp/lab/certs:/certs:ro
+    ports: ["127.0.0.1:19443:8443"]
+    healthcheck:
+      test: [CMD, python, -c, "import requests; requests.get('https://localhost:8443/__sim/state', headers={'X-API-KEY':'local-simulator-only'}, verify='/certs/cert.pem', timeout=2).raise_for_status()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  overlord:
+    image: overlord-lab:local
+    command: [uvicorn, controller:app, --app-dir, cgi-bin, --host, 0.0.0.0, --port, "19000"]
+    environment:
+      REQUESTS_CA_BUNDLE: /certs/cert.pem
+    volumes:
+      - ../../.amp/lab/certs/cert.pem:/certs/cert.pem:ro
+    ports: ["127.0.0.1:19001:19000"]
+    depends_on:
+      mqtt: {condition: service_healthy}
+      pihole: {condition: service_healthy}
+      unifi: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import requests; requests.get('http://localhost:19000/', timeout=2).raise_for_status()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  node-red:
+    image: nodered/node-red:4.0.9
+    command: [--settings, /data/settings.js]
+    healthcheck:
+      test: [CMD, node, -e, "const s=require('net').connect(1880,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ../../.amp/lab/flows.json:/data/flows.json:ro
+      - ./settings.js:/data/settings.js:ro
+    depends_on:
+      overlord: {condition: service_healthy}

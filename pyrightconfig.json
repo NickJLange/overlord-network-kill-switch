@@ -6,19 +6,7 @@
   "reportImportCycles": "warning",
   "reportDuplicateImport": "warning",
   "venvPath": ".",
-  "venv": "venv",
-  "pythonPath": "venv/bin/python",
+  "venv": ".venv",
   "extraPaths": ["./lib"],
-  "verboseOutput": true,
-  "executionEnvironments": [
-    {
-      "root": "./dns_admin",
-      "venvPath": "./dns_admin/",
-      "venv": "venv",
-      "extraPaths": ["./dns_admin/lib"]
-    },
-    {
-      "root": "./"
-    }
-  ]
+  "verboseOutput": true
 }

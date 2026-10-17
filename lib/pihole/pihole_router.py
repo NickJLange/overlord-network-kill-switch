@@ -9,7 +9,7 @@ import json
 
 import logging
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, BaseConfig
 from typing import Optional, List
 from pprint import pprint, pformat
@@ -89,5 +89,5 @@ def delete_all_dns():
 
 
 @alldns_router.post("/")
-def post_all_dns(timer: Optional[int] = None):
+def post_all_dns(timer: Optional[int] = Query(default=None, ge=0)):
     return all_dns.disable_dns_blocking(timer)

@@ -1,0 +1,21 @@
+name: MQTT simulator lab
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mqtt-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.9"
+          python-version: "3.12"
+      - name: Exercise real MQTT and disposable network services
+        run: scripts/lab test

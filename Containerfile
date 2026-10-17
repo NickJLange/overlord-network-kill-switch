@@ -1,12 +1,10 @@
-#FROM ghcr.io/astral-sh/uv:python3.12-trixie
 FROM python:3.12-slim-trixie
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /uvx /bin/
 
-RUN uv venv /opt/venv
-
-# Install dependencies:
-COPY etc/webserver_requirements.txt requirements.txt
-RUN . /opt/venv/bin/activate && uv pip install -r requirements.txt
+# Use the same locked runtime dependencies as local development and CI.
+WORKDIR /opt/webserver/
+COPY pyproject.toml uv.lock ./
+RUN UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --locked --no-dev --no-install-project
 
 WORKDIR /opt/webserver/cgi-bin/
 COPY cgi-bin/controller.py /opt/webserver/cgi-bin/

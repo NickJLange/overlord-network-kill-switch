@@ -1,0 +1,13 @@
+**
+!pyproject.toml
+!uv.lock
+!cgi-bin/
+!cgi-bin/*.py
+!lib/
+!lib/**
+!tests/
+!tests/lab/
+!tests/lab/unifi_sim.py
+!tests/lab/config.ini
+**/__pycache__/
+**/*.pyc

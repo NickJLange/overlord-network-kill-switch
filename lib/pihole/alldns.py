@@ -70,37 +70,25 @@ class MasterEnabler(BaseHTTPHandler):
     #     logger.debug(temp.text)
     #     return temp.json()
 
-    def flip_mode(self, status: bool | None = None):
+    def flip_mode(self, status: bool, timer: int | None = None):
         logger.debug(f"Flipping DNS blocking to {'enabled' if status else 'disabled'}")
-        stateMap = {"enabled": "true", "disabled": "false"}
         if not self.logged_in:
             logger.debug("Not logged in, logging in...")
             self.first_connect()
-        retv = list()
         for _, pi in self.sessions.items():
-            pi.dns_control.set_blocking_status(status, self.timer)
-            retp = pi.dns_control.get_blocking_status()
-            #            logger.debug(f"DNS status on {type(pi)}: {pformat(status)}")
-            retv.append(
-                json.dumps({k: retp[k] for k in ["blocking"]})
-            )  # timer is ticking, so whill not converge
-        if len(set(retv)) > 1:
-            logger.warning(
-                f"Inconsistent states detected among devices {pformat(retv)}"
-            )
-            return {"status": "unknown"}  #        self.cmd("disable, None, pi)
-        rets = json.loads(retv[0])
-        return {"status": stateMap[rets["blocking"]]}
+            response = pi.dns_control.set_blocking_status(status, timer)
+            if isinstance(response, dict) and "error" in response:
+                raise HTTPException(status_code=502, detail="Pi-hole rejected blocking change")
+        observed = self.get()
+        if observed["status"] != str(status).lower():
+            raise HTTPException(status_code=502, detail="Pi-hole blocking state did not converge")
+        return observed
 
     def disable_dns_blocking(self, timer=None):
-        if timer:
-            self.timer = timer
-        return self.flip_mode(status=False)
+        return self.flip_mode(status=False, timer=timer or None)
         # {'blocking': 'disabled', 'timer': 60 ...}
 
-    def enable_dns_blocking(self, timer=30):
-        if timer:
-            self.timer = timer
+    def enable_dns_blocking(self):
         return self.flip_mode(status=True)
 
     def get(self):
@@ -113,15 +101,14 @@ class MasterEnabler(BaseHTTPHandler):
         for _, pi in self.sessions.items():
             logger.debug(f"Getting DNS status on {type(pi)}")
             status = pi.dns_control.get_blocking_status()
-            retv.append(
-                json.dumps({k: status[k] for k in ["blocking"]})
-            )  # timer is ticking, so whill not converge
-        if len(set(retv)) > 1:
+            if not isinstance(status, dict) or status.get("blocking") not in stateMap:
+                raise HTTPException(status_code=502, detail="Cannot read Pi-hole blocking state")
+            retv.append(status["blocking"])
+        if len(set(retv)) != 1:
             logger.warning("Inconsistent states detected among devices")
             logger.warning(f"States: {pformat(retv)}")
             return {"status": "unknown"}  #        self.cmd("disable, None, pi)
-        rets = json.loads(retv[0])
-        return {"status": stateMap[rets["blocking"]]}
+        return {"status": stateMap[retv[0]]}
 
         # stateMap = {"enabled": "on", "disabled": "off"}
         # ## enumerate states, accounting for fact some states might be different between devices...

@@ -5,10 +5,11 @@ from pydantic import BaseModel, BaseConfig, ConfigDict
 from typing import Optional, List
 from pprint import pprint, pformat
 from pihole6api import PiHole6Client
+from fastapi import HTTPException
 
 # global default_log_level
 # logger = logging.getLogger(__name__)
-logger: logging.Logger | None = None
+logger = logging.getLogger(__name__)
 
 
 class BaseHTTPHandler(BaseModel):
@@ -60,9 +61,11 @@ class BaseHTTPHandler(BaseModel):
     #            hashlib.sha256(str(self.password).encode()).hexdigest().encode()
     #        ).hexdigest()
     def shutdown(self):
-        if self.logged_in:
+        try:
             for _, pi in self.sessions.items():
                 pi.close_session()
+        finally:
+            self.sessions.clear()
             self.logged_in = False
 
     def first_connect(self):
@@ -86,8 +89,11 @@ class BaseHTTPHandler(BaseModel):
             return
         # pArgs = {"pw": self.password, "persistentlogin": "on"}
         #        url = "/admin/login.php"
-        self.logged_in = True
+        if not self.piList:
+            raise HTTPException(status_code=503, detail="No Pi-hole devices configured")
         for pi in self.piList:
+            if pi in self.sessions:
+                continue
             furl = "http://" + str(pi)
             try:
                 logging.debug(f"Connecting to PiHole at {furl} for {pi}")
@@ -95,8 +101,9 @@ class BaseHTTPHandler(BaseModel):
                 logging.debug(f"Connected to PiHole with {self.sessions[pi]}")
             except Exception as e:
                 logger.error(f"Error connecting to PiHole at {furl}: {e}")
-                self.logged_in = False
-                continue
+        self.logged_in = all(pi in self.sessions for pi in self.piList)
+        if not self.logged_in:
+            raise HTTPException(status_code=503, detail="Not all Pi-hole devices are reachable")
 
     # def cmd(self, cmd, phList, method="post", pi=None, domain=None, comment=None):
     #     if not self.logged_in:

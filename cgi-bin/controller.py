@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI):
     # Clean up the ML models and release the resources
     if app_config["pihole_control_enabled"]:
         pihole_router.pihole.shutdown()
+        pihole_router.all_dns.shutdown()
     if app_config["ubiquiti_control_enabled"]:
         ubiquity.udm.shutdown()
     if app_config["mqtt_announce_enabled"]:
