@@ -92,7 +92,7 @@ class PiHoleOverlord(BaseHTTPHandler):
         if not self.logged_in:
             logger.debug("Not logged in, logging in...")
             self.first_connect()
-        state = "true"
+        states = set()
         control_type: str = "deny"
         logger.debug(f"Checking status {domain_block}")
         if domain_block in self.allow_domains:
@@ -102,27 +102,33 @@ class PiHoleOverlord(BaseHTTPHandler):
             logger.debug("%s -> %s" % (domain, self.transform(domain)))
             #            pprint(self.transform(domain))
             for _, pi in self.sessions.items():
-                resp = pi.domain_management.get_domain(domain, control_type, "regex")
-                if len(resp["domains"]) == 0 or (
-                    resp["domains"][0]["domain"] == domain
-                    and not resp["domains"][0]["enabled"]
-                ):
-                    logger.debug(
-                        f"Got domain response: {pformat(resp)} -> Marking Off for {domain_block}"
-                    )
-                    return {"status": "false"}
-                # Does it exist and is enabled?
-        logger.info(f"Result Status {state} for {domain_block}")
-        return {"status": state}
+                record = self.domain_record(pi, domain, control_type)
+                states.add(bool(record and record["enabled"]))
+        if len(states) != 1:
+            return {"status": "unknown"}
+        return {"status": str(states.pop()).lower()}
+
+    def domain_record(self, pi, domain, control_type):
+        response = pi.domain_management.get_domain(domain, control_type, "regex")
+        if not isinstance(response, dict) or "error" in response or "domains" not in response:
+            raise HTTPException(status_code=502, detail="Cannot read Pi-hole domain state")
+        records = response["domains"]
+        if not records:
+            return None
+        if len(records) != 1 or records[0].get("domain") != domain or "enabled" not in records[0]:
+            raise HTTPException(status_code=502, detail="Unexpected Pi-hole domain state")
+        return records[0]
 
     def post(
         self,
         direction: str,
         domain_block: str | None = None,
     ):
-        if not domain_block:
+        if not domain_block or (domain_block not in self.block_domains and domain_block not in self.allow_domains):
             logger.error("No domain block specified")
             raise HTTPException(status_code=404, detail="Domain Block not configured")
+        if direction not in ("enable", "disable"):
+            raise HTTPException(status_code=404, detail="Unknown direction")
         if not self.logged_in:
             logger.debug("Not logged in, logging in...")
             self.first_connect()
@@ -134,24 +140,20 @@ class PiHoleOverlord(BaseHTTPHandler):
 
         logger.info(f"Request to {direction} {control_type} {domain_block}")
         for _, pi in self.sessions.items():
-            retc = list()
             for domain in self.domains[control_type][domain_block]:
-                rez = None
-                if direction == "disable":
-                    rez = pi.domain_management.delete_domain(
-                        domain,
-                        control_type,
-                        "regex",
-                    )
+                record = self.domain_record(pi, domain, control_type)
+                if direction == "disable" and record:
+                    pi.domain_management.delete_domain(domain, control_type, "regex")
                 elif direction == "enable":
-                    rez = pi.domain_management.add_domain(
-                        domain, control_type, "regex", groups=[0]
-                    )
-                else:
-                    logger.error(f"Unknown direction: {direction}")
-                    raise HTTPException(status_code=404, detail="Unknown direction")
-                logger.debug(
-                    f"{control_type}/{direction}/{domain} domain response: \n {rez['domains'][0]['enabled'] if rez and 'domains' in rez else 'Unknown'}"
-                )
-                retc.append(rez)
-        return {"status": "ok"}
+                    if record is None:
+                        pi.domain_management.add_domain(domain, control_type, "regex", groups=[0])
+                    elif not record["enabled"]:
+                        pi.domain_management.update_domain(
+                            domain, control_type, "regex", enabled=True,
+                            groups=record.get("groups", [0]), comment=record.get("comment"),
+                        )
+        observed = self.get(domain_block)
+        expected = "true" if direction == "enable" else "false"
+        if observed["status"] != expected:
+            raise HTTPException(status_code=502, detail="Pi-hole domain state did not converge")
+        return observed

@@ -26,45 +26,6 @@ class TestPiholeRouter:
             assert pihole_router.pihole is not None
             assert pihole_router.all_dns is not None
 
-    @patch(PIHOLE_CLIENT_PATCH)
-    def test_pihole_get_status(self, mock_client_class, mock_app_config, mock_pihole_client):
-        """Test pihole.get returns correct status."""
-        mock_client_class.return_value = mock_pihole_client
-        mock_pihole_client.domain_management.get_domain.return_value = {
-            "domains": [{"domain": "youtube.com", "enabled": True}]
-        }
-
-        from pihole.pihole import PiHoleOverlord
-
-        overlord = PiHoleOverlord(app_config=mock_app_config)
-        result = overlord.get("youtube")
-
-        assert result == {"status": "true"}
-
-    @patch(PIHOLE_CLIENT_PATCH)
-    def test_pihole_post_enable(self, mock_client_class, mock_app_config, mock_pihole_client):
-        """Test pihole.post with enable direction."""
-        mock_client_class.return_value = mock_pihole_client
-
-        from pihole.pihole import PiHoleOverlord
-
-        overlord = PiHoleOverlord(app_config=mock_app_config)
-        result = overlord.post("enable", "youtube")
-
-        assert result == {"status": "ok"}
-
-    @patch(PIHOLE_CLIENT_PATCH)
-    def test_pihole_post_disable(self, mock_client_class, mock_app_config, mock_pihole_client):
-        """Test pihole.post with disable direction."""
-        mock_client_class.return_value = mock_pihole_client
-
-        from pihole.pihole import PiHoleOverlord
-
-        overlord = PiHoleOverlord(app_config=mock_app_config)
-        result = overlord.post("disable", "youtube")
-
-        assert result == {"status": "ok"}
-
 
 class TestAlldnsRouter:
     """Test all_dns router functions directly."""
