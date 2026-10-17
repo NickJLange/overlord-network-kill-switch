@@ -35,15 +35,17 @@ async def update_rules(updates: list[dict]):
     pending_fault, fault = fault, "none"
     if pending_fault == "reject":
         raise HTTPException(503, "Injected controller failure")
-    # Validate the entire batch before applying anything.
-    for update in updates:
-        if set(update) != {"_id", "enabled"} or type(update["enabled"]) is not bool:
-            raise HTTPException(400, "Expected _id and boolean enabled")
-        if sum(rule["_id"] == update["_id"] for rule in rules) != 1:
-            raise HTTPException(404, "Unknown or ambiguous rule ID")
+    # Model only the single-rule request the client currently sends.
+    if len(updates) != 1:
+        raise HTTPException(400, "Simulator supports one rule per request")
+    update = updates[0]
+    if set(update) != {"_id", "enabled"} or type(update["enabled"]) is not bool:
+        raise HTTPException(400, "Expected _id and boolean enabled")
+    matches = [rule for rule in rules if rule["_id"] == update["_id"]]
+    if len(matches) != 1:
+        raise HTTPException(404, "Unknown or ambiguous rule ID")
     if pending_fault != "ignore":
-        for update in updates:
-            next(rule for rule in rules if rule["_id"] == update["_id"]).update(update)
+        matches[0].update(update)
     return {"meta": {"rc": "ok"}}
 
 

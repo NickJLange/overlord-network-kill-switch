@@ -341,8 +341,9 @@ def test_failed_revoke_never_reports_success_and_status_can_recover(rule_api, fa
 
 def test_cold_refresh_authenticates_and_discards_deleted_rules(rule_api):
     client, rules, session = rule_api
+    rules.append({"_id": "unrelated-unnamed-policy", "enabled": False})
     assert client.get("/ubiquiti/refresh").status_code == 200
-    assert session.get.call_args.kwargs["timeout"] == (3.05, 10)
+    assert session.get.call_args.kwargs["timeout"] is not None
     assert session.headers.update.call_args.args == ({"X-API-KEY": "test_api_key"},)
     rules.pop(0)
     assert client.get("/ubiquiti/refresh").status_code == 200

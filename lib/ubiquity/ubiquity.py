@@ -154,8 +154,10 @@ class UbiquitiOverlord(BaseModel):
         trans = {True: "enabled", False: "disabled"}
         stats = {"enabled": 0, "disabled": 0}
         for rule in rules:
-            if not isinstance(rule, dict) or not isinstance(rule.get("name"), str):
+            if not isinstance(rule, dict):
                 raise HTTPException(status_code=502, detail="Invalid UniFi rule")
+            if not isinstance(rule.get("name"), str):
+                continue  # Unnamed policies cannot match a configured rule.
             if rule["name"] in discovered:
                 if discovered[rule["name"]]:
                     raise HTTPException(status_code=409, detail=f"Duplicate UniFi rule: {rule['name']}")
@@ -368,7 +370,6 @@ class UbiquitiOverlord(BaseModel):
         if rule is None or rule not in self.firewall_rules:
             raise HTTPException(status_code=400, detail="Invalid rule")
         trans = {"enabled": True, "disabled": False}
-        self.check_logged_in()
 
         # Resolve the current rule ID before every write, even with a fresh cache.
         self.parse_firewall_rules()

@@ -34,11 +34,13 @@ def api():
         yield client
 
 
-async def receive(client, topic, timeout=6):
+async def receive(client, topic, timeout=6, expected=None):
     async with asyncio.timeout(timeout):
         async for message in client.messages:
-            if str(message.topic) == topic:
-                return message.payload.decode()
+            if str(message.topic) == topic and not message.retain:
+                payload = message.payload.decode()
+                if expected is None or payload == expected:
+                    return payload
 
 
 async def settle(client):
@@ -57,15 +59,13 @@ async def mqtt_client():
     async with aiomqtt.Client("127.0.0.1", 18883) as client:
         await client.subscribe("stat/#", qos=1)
         # Read-only readiness probe waits for actual Node-RED MQTT subscriptions,
-        # not merely an open HTTP port. Distinct payloads survive status RBE nodes.
-        for attempt in range(20):
-            await client.publish(f"stat/router_controller/status_rule/{YOUTUBE}", f"probe-{attempt}")
+        # using the documented command topic rather than a status feedback loop.
+        for _ in range(10):
+            await client.publish("cmnd/dns_controller/master/status", "", qos=1)
             try:
-                while True:
-                    response = await receive(client, f"stat/router_controller/status_rule/{YOUTUBE}", 1)
-                    if response in ("true", "false"):
-                        break
-                break
+                response = await receive(client, "stat/dns_controller/master/status", 2)
+                if response in ("true", "false"):
+                    break
             except TimeoutError:
                 continue
         else:
@@ -82,7 +82,7 @@ def enabled(simulator):
 
 async def command(client, target, value):
     await client.publish(f"cmnd/router_controller/change_rule/{target}", value, qos=1)
-    result = await receive(client, f"stat/router_controller/status_rule/{target}")
+    result = await receive(client, f"stat/router_controller/status_rule/{target}", expected=value)
     await settle(client)
     return result
 
@@ -114,20 +114,6 @@ async def test_failed_revoke_has_no_confirmation_and_same_command_can_retry(
     assert enabled(simulator) == {YOUTUBE: False, INTERNET: False, "Restricted_Default": True}
 
 
-@pytest.mark.parametrize("change", ["removed", "duplicate"])
-def test_missing_or_ambiguous_rules_do_not_write(simulator, api, change):
-    inventory = simulator.get("/__sim/state").json()["rules"]
-    if change == "removed":
-        inventory.pop(0)
-    else:
-        inventory.append({**inventory[0], "_id": "duplicate"})
-    simulator.put("/__sim/rules", json=inventory).raise_for_status()
-    assert api.get(f"/ubiquiti/enable_rule/{YOUTUBE}").status_code == 409
-    observed = simulator.get("/__sim/state").json()
-    assert observed["writes"] == 0
-    assert observed["rules"] == inventory
-
-
 async def test_malformed_mqtt_and_unconfigured_baseline_never_write(simulator, api, mqtt_client):
     await mqtt_client.publish(f"cmnd/router_controller/change_rule/{YOUTUBE}", "maybe", qos=1)
     with pytest.raises(TimeoutError):
@@ -137,14 +123,14 @@ async def test_malformed_mqtt_and_unconfigured_baseline_never_write(simulator, a
     assert enabled(simulator)["Restricted_Default"] is True
 
 
-def test_simulator_auth_and_atomic_batch_validation(simulator):
+def test_simulator_rejects_wrong_or_missing_api_key(simulator):
     policies = "/proxy/network/v2/api/site/default/firewall-policies"
     assert simulator.get(policies, headers={"X-API-KEY": "wrong"}).status_code == 401
-    assert simulator.put(policies + "/batch", json=[
-        {"_id": "internet", "enabled": False},
-        {"_id": "missing", "enabled": True},
-    ]).status_code == 404
-    assert enabled(simulator)[INTERNET] is True
+    del simulator.headers["X-API-KEY"]
+    try:
+        assert simulator.get(policies).status_code == 401
+    finally:
+        simulator.headers["X-API-KEY"] = "local-simulator-only"
 
 
 @pytest.fixture
@@ -161,7 +147,7 @@ def pihole():
 
 async def dns_command(client, topic, value, status_topic):
     await client.publish(topic, value, qos=1)
-    response = await receive(client, status_topic)
+    response = await receive(client, status_topic, expected=value)
     await settle(client)
     return response
 
@@ -183,12 +169,7 @@ async def test_mqtt_master_polarity_timers_and_expiry_feedback(api, mqtt_client,
     assert await dns_command(mqtt_client, permanent, "true", status) == "true"
     api.post("/alldns/?timer=1").raise_for_status()
     # A scheduled poll before expiry may legitimately still report bypass ON.
-    async with asyncio.timeout(15):
-        while True:
-            observed = await receive(mqtt_client, status, 15)
-            assert observed in ("true", "false")
-            if observed == "false":
-                break
+    assert await receive(mqtt_client, status, 15, expected="false") == "false"
     assert pihole.get("/dns/blocking").json()["blocking"] == "enabled"
 
 

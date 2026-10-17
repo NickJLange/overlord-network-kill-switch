@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 docker_cmd=(docker)
 if ! docker info >/dev/null 2>&1; then docker_cmd=(sudo docker); fi
-compose=("${docker_cmd[@]}" compose -f tests/lab/compose.yaml)
+compose=("${docker_cmd[@]}" compose -p overlord-lab -f tests/lab/compose.yaml)
 prepare() {
     uv run --locked python tests/lab/prepare.py
     mkdir -p .amp/lab/certs
