@@ -1,9 +1,15 @@
 .DEFAULT_GOAL := all
 
-# deprecated dns_servers, source via envfile
-include private/etc/envfile
-include private/ghcr_username
+# Optional local deployment settings; tests and dependency checks need no secrets.
+-include private/etc/envfile
+-include private/ghcr_username
 VERSION=2.6
+COMPOSE = docker compose -f tests/docker-compose.test.yaml
+UV_EXPORT = uv export --locked --no-hashes --no-annotate --no-emit-project
+
+.PHONY: all clean venv full release push push-local test-local test-remote \
+	test-release test-unit test-integration test-integration-down test \
+	export-deps check-deps
 
 check-env-%:
 	@ # This code checks if an environment variable is empty
@@ -14,31 +20,37 @@ check-env-%:
 	fi
 
 clean:
-	rm -rf venv/
-	find . -name __pycache__ -exec rm -rf {} \;
+	rm -rf .venv/ venv/ .pytest_cache/ .coverage coverage.xml
+	find cgi-bin lib tests scripts -type d -name __pycache__ -prune -exec rm -rf {} +
 
 venv:
-	if [ ! -d "venv" ] ; then \
-	   uv venv; \
-	   source .venv/bin/activate ; \
-	   uv pip install -r etc/webserver_requirements.txt ; \
-	fi
+	uv sync --locked
 
-full: venv
-	cp private/etc/config.ini etc/config.ini
-	cp private/etc/envfile etc/envfile
-	( \
-        . .venv/bin/activate; \
-    	pyclean .; \
-    	podman build -f Containerfile  . \
-        -t overlord-dns-admin \
-	)
+export-deps:
+	$(UV_EXPORT) --no-dev > etc/webserver_requirements.txt
+	$(UV_EXPORT) --only-dev > etc/test_requirements.txt
 
-release:
+check-deps:
+	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	$(UV_EXPORT) --no-dev > "$$tmp/runtime.txt"; \
+	diff -u etc/webserver_requirements.txt "$$tmp/runtime.txt"; \
+	$(UV_EXPORT) --only-dev > "$$tmp/test.txt"; \
+	diff -u etc/test_requirements.txt "$$tmp/test.txt"
+
+etc/config.ini:
+	@if [ -f private/etc/config.ini ]; then \
+		cp private/etc/config.ini $@; \
+	else cp etc/config.ini.sample $@; fi
+
+full: etc/config.ini
+	@if [ -f private/etc/envfile ]; then cp private/etc/envfile etc/envfile; fi
+	podman build -f Containerfile . -t overlord-dns-admin
+
+release: check-env-RELEASE_USERNAME
 	podman tag localhost/overlord-dns-admin:latest ghcr.io/${RELEASE_USERNAME}/overlord-network-kill-switch:${VERSION}
 	podman push ghcr.io/${RELEASE_USERNAME}/overlord-network-kill-switch:${VERSION}
 
-push:
+push: check-env-GHCR_USERNAME
 	podman tag localhost/overlord-dns-admin:latest ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}-test
 	podman push ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}-test
 
@@ -55,25 +67,24 @@ TEST_CMD = podman run -d --replace --name=overlord-dns -p 19000:19000 --restart=
 test-local:
 	$(TEST_CMD) localhost/overlord-dns-admin
 
-test-remote:
+test-remote: check-env-GHCR_USERNAME
 	podman pull ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}-test
 	$(TEST_CMD) ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}-test
 
-test-release:
+test-release: check-env-GHCR_USERNAME
 	podman pull ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}
 	$(TEST_CMD) ghcr.io/${GHCR_USERNAME}/overlord-network-kill-switch:${VERSION}
 
 test-unit:
-	. .venv/bin/activate && pytest tests/unit -v -m unit --tb=short
+	uv run --locked pytest tests/unit -v -m unit --tb=short
 
-test-integration:
-	cd tests && docker-compose -f docker-compose.test.yaml up -d --build
-	sleep 60
-	. .venv/bin/activate && pytest tests/integration -v -m integration --tb=short
-	cd tests && docker-compose -f docker-compose.test.yaml down -v
+test-integration: etc/config.ini
+	@set -eu; trap '$(COMPOSE) down -v' EXIT; \
+	$(COMPOSE) up -d --build --wait --wait-timeout 300; \
+	uv run --locked pytest tests/integration -v -m integration --tb=short
 
 test-integration-down:
-	cd tests && docker-compose -f docker-compose.test.yaml down -v
+	$(COMPOSE) down -v
 
 test: test-unit
 

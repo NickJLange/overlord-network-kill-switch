@@ -7,6 +7,11 @@ lego-data
 lego_secrets.env
 venv
 .venv
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .vscode
 *.bin
 etc/dns_servers

@@ -11,7 +11,7 @@ i.e.
 ### Requires:
  - [Homebridge: MQTT Thing](https://github.com/arachnetech/homebridge-mqttthing)
  - [NodeRed](https://nodered.org/)
- - [Gunicorn/ Flask ](https://gunicorn.org/)
+ - [Gunicorn](https://gunicorn.org/) / [FastAPI](https://fastapi.tiangolo.com/)
  - [Pihole ](https://pi-hole.net/)
  - [PiHole6API](https://github.com/sbarbett/pihole6api)
  - [Ubiquiti Network Controller](https://www.ui.com/software/)
@@ -52,6 +52,41 @@ REMOTE_UBIQUITI_API_KEY=<YOUR_UNIFI_API_KEY>
 podman run -d --replace --name=overlord-dns -p 19000:19000 --env-file=./etc/envfile ghcr.io/nickjlange/overlord-network-kill-switch:latest
 
 ```
+
+### Development and checks
+
+Use Python 3.12 and [uv](https://docs.astral.sh/uv/) (CI and container builds use
+uv 0.12.9). Private deployment files are optional for development.
+
+```bash
+make venv          # Sync .venv from uv.lock, including test dependencies
+make check-deps    # Verify the lock and generated requirements are current
+make test-unit     # Run the mocked, unit-marked suite in tests/unit
+```
+
+`pyproject.toml` is the dependency source of truth; `uv.lock` pins the resolved
+versions used locally, in CI, and in the container. The requirements files in
+`etc/` are generated exports for pip users. After an intentional dependency edit,
+run `uv lock`, `make export-deps`, and `make test-unit`, and commit the manifest,
+lock, and both exports together. Use `uv lock --upgrade-package <name>` for a
+targeted update that still satisfies the manifest's constraints.
+
+`make full` builds with Podman. If `etc/config.ini` does not exist, it copies
+`private/etc/config.ini` when available, otherwise `etc/config.ini.sample`.
+Existing `etc/config.ini` files are preserved; review the configuration before
+running a container. Mount deployment configuration at runtime rather than
+baking credentials into an image intended for publication.
+
+`make test-integration` requires Docker Engine and Compose v2 with `up --wait`
+support. It builds a disposable Pi-hole/Overlord stack, waits for health checks,
+runs `tests/integration`, and removes the stack and its test volumes even if a
+test fails. Ports 8080, 5353, and 19000 must be available. Use
+`make test-integration-down` to clean up after an interrupted run.
+
+The mocked unit suite does not exercise real devices or HTTP routing. The
+separate integration suite is primarily service reachability/status coverage.
+Release builds run on `v*` tags or a manual workflow dispatch of the selected
+Git ref; there is no separate tag input overriding that ref.
 
 ### NodeRed Config
 
