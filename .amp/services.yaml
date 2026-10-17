@@ -1,0 +1,14 @@
+services:
+  docker-daemon:
+    command: sudo dockerd
+    platforms: [linux]
+  network-lab:
+    command: scripts/lab serve
+    platforms: [linux]
+    port: 19001
+    health: /
+    review: false
+    portal:
+      url: /docs
+      title: Disposable network lab API
+      description: Real MQTT, Node-RED and Pi-hole; simulated UniFi rules. Fixed local test configuration.

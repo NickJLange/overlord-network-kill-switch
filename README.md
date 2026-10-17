@@ -83,10 +83,18 @@ runs `tests/integration`, and removes the stack and its test volumes even if a
 test fails. Ports 8080, 5353, and 19000 must be available. Use
 `make test-integration-down` to clean up after an interrupted run.
 
-The mocked unit suite does not exercise real devices or HTTP routing. The
-separate integration suite is primarily service reachability/status coverage.
+The unit suite includes HTTP-route checks with mocked device boundaries; it does
+not exercise real devices. The original integration suite is primarily service
+reachability/status coverage. For real MQTT → Node-RED → FastAPI tests with
+Pi-hole and a stateful UniFi simulator, see the [disposable lab](tests/lab/README.md).
+In an orb, run `.agents/setup`, then `amp orb services ensure` and `scripts/lab check`.
+Outside an orb, `scripts/lab test` runs and cleans up the disposable stack.
 Release builds run on `v*` tags or a manual workflow dispatch of the selected
 Git ref; there is no separate tag input overriding that ref.
+
+For restricted-default UniFi access with named ALLOW exceptions, see the
+[policy guide](lib/ubiquity/POLICY.md). It requires operator-configured network
+admission and rule precedence; it is not a deployed firewall policy.
 
 ### NodeRed Config
 

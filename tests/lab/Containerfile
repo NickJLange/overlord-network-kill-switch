@@ -1,0 +1,10 @@
+FROM python:3.12-slim-trixie
+COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /bin/uv
+WORKDIR /opt/webserver
+COPY pyproject.toml uv.lock ./
+RUN UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --locked --no-dev --no-install-project
+COPY cgi-bin/ cgi-bin/
+COPY lib/ lib/
+COPY tests/lab/unifi_sim.py /sim/unifi_sim.py
+COPY tests/lab/config.ini etc/config.ini
+ENV PATH="/opt/venv/bin:$PATH"

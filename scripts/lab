@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+docker_cmd=(docker)
+if ! docker info >/dev/null 2>&1; then docker_cmd=(sudo docker); fi
+compose=("${docker_cmd[@]}" compose -f tests/lab/compose.yaml)
+prepare() {
+    uv run --locked python tests/lab/prepare.py
+    mkdir -p .amp/lab/certs
+    if [[ ! -f .amp/lab/certs/cert.pem ]]; then
+        openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -keyout .amp/lab/certs/key.pem -out .amp/lab/certs/cert.pem \
+            -subj /CN=unifi -addext 'subjectAltName=DNS:unifi,DNS:localhost,IP:127.0.0.1' \
+            >/dev/null 2>&1
+        chmod 600 .amp/lab/certs/key.pem
+    fi
+}
+case "${1:-test}" in
+    prepare) prepare ;;
+    serve)
+        for attempt in {1..30}; do
+            if "${docker_cmd[@]}" info >/dev/null 2>&1; then break; fi
+            sleep 1
+        done
+        prepare
+        exec "${compose[@]}" up --build --abort-on-container-exit
+        ;;
+    test)
+        if [[ -n "$("${compose[@]}" ps -q)" ]]; then
+            echo 'Lab is already running. Use scripts/lab check, or stop it before test.' >&2
+            exit 1
+        fi
+        prepare
+        cleanup() {
+            result=$?
+            if [[ $result -ne 0 ]]; then "${compose[@]}" logs --tail=80 || true; fi
+            "${compose[@]}" down -v
+            exit "$result"
+        }
+        trap cleanup EXIT
+        "${compose[@]}" up -d --build --wait --wait-timeout 180
+        uv run --locked pytest tests/lab/test_stack.py -q
+        ;;
+    check) uv run --locked pytest tests/lab/test_stack.py -q ;;
+    down) "${compose[@]}" down -v ;;
+    *) echo 'Usage: scripts/lab {prepare|serve|test|check|down}' >&2; exit 2 ;;
+esac
