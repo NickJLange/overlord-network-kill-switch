@@ -131,18 +131,37 @@ class UbiquitiOverlord(BaseModel):
         5. Checks if the rule name exists in the firewall rules dictionary.
         6. Updates the firewall rules dictionary with the origin ID.
         """
-        if not self.logged_in:
-            raise HTTPException(status_code=401, detail="Not logged in")
+        self.check_logged_in()
 
-        response = self.session.get(self.firewall_rule_list_url, verify=True)
+        # A failed refresh must not leave deleted rules or old states usable.
+        self.firewall_rules = {name: {} for name in self.firewall_rules}
+        self.last_rules_check = None
+        try:
+            response = self.session.get(
+                self.firewall_rule_list_url, verify=True, timeout=(3.05, 10)
+            )
+        except requests.RequestException as exc:
+            raise HTTPException(status_code=502, detail="Could not read UniFi rules") from exc
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=response.text)
-        rules = response.json()
+        try:
+            rules = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Invalid UniFi rules response") from exc
+        if not isinstance(rules, list):
+            raise HTTPException(status_code=502, detail="Invalid UniFi rules response")
+        discovered = {name: {} for name in self.firewall_rules}
         trans = {True: "enabled", False: "disabled"}
         stats = {"enabled": 0, "disabled": 0}
         for rule in rules:
-            if rule["name"] in self.firewall_rules:
-                self.firewall_rules[rule["name"]] = rule
+            if not isinstance(rule, dict) or not isinstance(rule.get("name"), str):
+                raise HTTPException(status_code=502, detail="Invalid UniFi rule")
+            if rule["name"] in discovered:
+                if discovered[rule["name"]]:
+                    raise HTTPException(status_code=409, detail=f"Duplicate UniFi rule: {rule['name']}")
+                if not rule.get("_id") or type(rule.get("enabled")) is not bool:
+                    raise HTTPException(status_code=502, detail="Invalid UniFi rule")
+                discovered[rule["name"]] = rule
                 ## We apparently need to package the whole json
                 # Note: moved from orgin_id to _id in latest controller
                 stats[trans[rule["enabled"]]] += 1
@@ -151,6 +170,7 @@ class UbiquitiOverlord(BaseModel):
                 )
 
         # Update the last checked timestamp
+        self.firewall_rules = discovered
         self.last_rules_check = datetime.now()
         logger.info(
             f"Updated firewall rules at {self.last_rules_check} - {pformat(stats)}"
@@ -313,10 +333,14 @@ class UbiquitiOverlord(BaseModel):
         Returns:
             dict: The status of the target rule
         """
+        if rule is None or rule not in self.firewall_rules:
+            raise HTTPException(status_code=400, detail="Invalid rule")
         self.check_logged_in()
         # Check if rules need refreshing
         self.check_rules_freshness()
 
+        if not self.firewall_rules[rule]:
+            raise HTTPException(status_code=409, detail=f"Configured UniFi rule missing: {rule}")
         temp = self.firewall_rules[rule]["enabled"]
         logger.debug(f"getting  status for {rule}  as {temp}")
         return {"status": temp}
@@ -346,8 +370,10 @@ class UbiquitiOverlord(BaseModel):
         trans = {"enabled": True, "disabled": False}
         self.check_logged_in()
 
-        # Check if rules need refreshing
-        self.check_rules_freshness()
+        # Resolve the current rule ID before every write, even with a fresh cache.
+        self.parse_firewall_rules()
+        if not self.firewall_rules[rule]:
+            raise HTTPException(status_code=409, detail=f"Configured UniFi rule missing: {rule}")
         #        logger.debug(f" {pformat(self.firewall_rules)}")
         logger.debug(
             f"Changing status for {rule} to {requested_status} from {self.firewall_rules[rule]['enabled']}"
@@ -380,7 +406,13 @@ class UbiquitiOverlord(BaseModel):
         # request_object["_id"] = request_object["origin_id"]
         # payload = request_object
         # action\
-        resp_raw = self.cmd(url=url, data=payload, method="put", qs=None)
+        self.last_rules_check = None
+        self.firewall_rules[rule] = {}
+        try:
+            resp_raw = self.cmd(url=url, data=payload, method="put", qs=None)
+        except requests.RequestException:
+            logger.warning("UniFi update outcome unknown for %s", rule)
+            return {"status": "unknown"}
         # resp = resp_raw.json()
         # pprint(resp_raw)
         if resp_raw.status_code != 200:
@@ -391,7 +423,10 @@ class UbiquitiOverlord(BaseModel):
             self.logged_in = False
             return {"status": "unknown"}
         self.parse_firewall_rules()
-        state = self.firewall_rules[rule]["enabled"]
+        state = self.firewall_rules[rule].get("enabled")
+        if state is not trans[requested_status]:
+            logger.warning("UniFi did not confirm requested state for %s", rule)
+            return {"status": "unknown"}
         logger.info(f"Changed status for {rule} to {state}")
         return {"status": state}
 

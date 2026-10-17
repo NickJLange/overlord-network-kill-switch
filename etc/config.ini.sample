@@ -21,11 +21,18 @@ lwt_topics:
 # remote_ubiquiti_api_key: <YOUR_UNIFI_API_KEY> - also set  via REMOTE_UBIQUITI_API_KEY environmental variable
 
 [ubiquiti_targets]
+# Legacy block/unblock lists, NOT durable device identities or an access allowlist.
+# For restricted-by-default access and MAC rotation limits, see lib/ubiquity/POLICY.md.
 kids_macs: <MAC_ADDRESS_1>
            <MAC_ADDRESS_2>
 laptop: <MAC_ADDRESS_3>
 
 [ubiquiti_rules]
+# Names of existing UniFi rules that this service may toggle; order here does not
+# set firewall precedence. Keep legacy rules below until an operator migrates them.
+# For the opt-in allow-exception model, list ONLY the verified ALLOW exception
+# rules here (e.g. Allow_YouTube_Approved, Allow_Internet_Approved), not the baseline
+# deny rule. ON enables a rule; it does not infer allow/block from its name.
 rules:  Fun_Full
         Fun_Youtube
         Stop_All_Fun

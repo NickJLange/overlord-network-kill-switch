@@ -341,7 +341,7 @@
     "inputs": 0,
     "x": 100,
     "y": 900,
-    "wires": [["4f9af4f16f17cb98"]]
+    "wires": [["f0bd60e6496e3721"]]
   },
   {
     "id": "1c70348aae6011a6",
@@ -419,7 +419,7 @@
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "let webserver = flow.get('endpoint');\n// Which node\n// Bail on anything empty or not change for this path\nif (!([\"status_rule\",\"status_device\",\"change_device\",\"change_rule\"].includes(msg.verb)) || msg.target == \"\"){\n   node.warn(`ignoring ${msg.verb}`)\n    return [null, msg]\n}\n\nvar router_path=\"\"\n\nmsg.method = \"GET\";\nif (msg.verb.includes(\"status\"))\n{\n  router_path = msg.verb\n  msg.payload =\"\"\n  node.warn(`status ${msg.verb}`)\n}\nelse if (msg.verb == \"change_device\")\n{\n  // OFF (Send to WebServer)\n  let intent = msg.payload\n  var method \n  if (intent == \"offline\"){\n    router_path=\"disable_device\";\n  } \n  if (intent == \"online\") {\n      router_path=\"enable_device\";\n  }\n}\nelse if (msg.verb == \"change_rule\") {\n  // OFF (Send to WebServer)\n  let intent = msg.payload\n  var method\n  if (intent == \"false\") {\n    router_path = \"disable_rule\";\n  }\n  if (intent == \"true\") {\n    router_path = \"enable_rule\";\n  }\n}\nelse {\n  return null;\n}\nmsg.url = `${webserver}/ubiquiti/${router_path}/${msg.target}`\nmsg.topic = `stat/router_controller/status/${msg.target}`\nnode.warn(`Looking at ${msg.verb} vs ${router_path} for ${msg.target} at ${msg.topic}`)\nreturn msg;\n",
+    "func": "const webserver = flow.get('endpoint');\nif (typeof msg.target !== 'string' || !msg.target || !['status_rule', 'status_device', 'change_device', 'change_rule'].includes(msg.verb)) {\n    node.error('Invalid router target or verb', msg);\n    return null;\n}\nlet router_path;\nif (msg.verb.startsWith('status_')) {\n    router_path = msg.verb;\n} else if (msg.verb === 'change_rule') {\n    // ON enables the configured rule: use ALLOW rules for access exceptions.\n    if (msg.payload === true || msg.payload === 'true') router_path = 'enable_rule';\n    if (msg.payload === false || msg.payload === 'false') router_path = 'disable_rule';\n} else {\n    if (msg.payload === 'online') router_path = 'enable_device';\n    if (msg.payload === 'offline') router_path = 'disable_device';\n}\nif (!router_path) {\n    node.error('Invalid router command; no request sent', msg);\n    return null;\n}\nmsg.method = 'GET';\nmsg.payload = '';\nmsg.url = `${webserver}/ubiquiti/${router_path}/${encodeURIComponent(msg.target)}`;\nmsg.topic = `stat/router_controller/status/${msg.target}`;\nreturn msg;\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
@@ -526,7 +526,7 @@
     "type": "function",
     "z": "8a44f6ee5126dadc",
     "name": "",
-    "func": "\nif (msg.statusCode == 200)\n{\n  node.warn(`HTTP Response of Payload ${msg.payload.status}`)\n}\n\nreturn {\"payload\": msg.payload.status,\n  \"topic\": `stat/router_controller/status_rule/${msg.target}`};\n\n",
+    "func": "const status = msg.payload && msg.payload.status;\nconst isRule = ['status_rule', 'change_rule'].includes(msg.verb);\nconst valid = isRule ? typeof status === 'boolean' : ['online', 'offline'].includes(status);\nif (msg.statusCode !== 200 || !valid) {\n    node.error('UniFi state unconfirmed; not publishing a switch state', msg);\n    return null;\n}\nreturn {payload: status, topic: `stat/router_controller/status_rule/${msg.target}`};\n",
     "outputs": 1,
     "timeout": "",
     "noerr": 0,
