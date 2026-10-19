@@ -1,27 +1,15 @@
 #!/usr/bin/env python3
-# import pihole as ph
 
-import requests
-import hashlib
-from urllib import parse as urlparse
 import urllib3
-import re
 import sys
 import os
-import json
 import logging
 import configparser
-from pprint import pprint, pformat
-from collections import defaultdict
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, BaseConfig
-from typing import Optional, List
+from pprint import pformat
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-import aiomqtt  # noqa: F401
-
-### For Data Sharing of Login Sessions
-from multiprocessing import Manager
+import aiomqtt
 
 # Disable warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -29,8 +17,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../lib/"))
 
-# pihole.init()
-from pihole import pihole, pihole_router  # noqa: E402
+from pihole import pihole_router  # noqa: E402
 from ubiquity import ubiquity  # noqa: E402
 
 default_log_level = logging.INFO
@@ -72,7 +59,6 @@ def init_config(app, config_location: str = "../etc/config.ini"):
     config = configparser.ConfigParser()
     try:
         config.read(config_location)
-        # Load DNS blocks into
         logger.info(pformat(config.sections()))
         for key in [
             "ubiquiti_control_enabled",
@@ -94,7 +80,6 @@ def init_config(app, config_location: str = "../etc/config.ini"):
                 app_config[area] = dict()
                 for provider in config.options(area):
                     app_config[area][provider] = config.get(area, provider).splitlines()
-            #            print(provider)
             app_config["remote_pi_list"] = config.get(
                 "general",
                 "remote_pi_list",
@@ -106,11 +91,6 @@ def init_config(app, config_location: str = "../etc/config.ini"):
                 "remote_pi_password",
                 fallback=os.environ.get("REMOTE_PI_PASSWORD"),
             )
-            # app_config["remote_pi_token"] = config.get(
-            #     "general",
-            #     "remote_pi_token",
-            #     fallback=os.environ.get("REMOTE_PI_TOKEN"),
-            # )
         if app_config["ubiquiti_control_enabled"]:
             for i in ["DEVICE", "API_KEY"]:
                 key = "ubiquiti_%s" % (i.lower())
@@ -156,11 +136,7 @@ def init_config(app, config_location: str = "../etc/config.ini"):
         app_config["logger"] = logger
     except configparser.Error as a:
         logger.error("Couldn't read configs from: %s %s" % (config_location, a))
-    # logger.debug(app_config)
     return app_config
-
-    # query status of each one and make the call
-    # check ipv6 prefix - alert if diff?
 
 
 async def publish_to_mqtt(mqtt_config: dict, status: str):
@@ -184,15 +160,6 @@ async def lifespan(app: FastAPI):
 
     app_config = init_config(app, config_file)
 
-    # ~njl/dev/src/overlord/dns_admin/venv/bin/python3
-
-    # FIXME: Move to GUNICORN Logging object
-
-    #    sharedMemManager = Manager()
-    #    app_config["shmem_store"] = sharedMemManager.dict()
-    #    app_config["shmem_mgr"] = sharedMemManager
-
-    # ENHANCEME: Only start if using
     if app_config["pihole_control_enabled"]:
         pihole_router.init(app_config)
         app.include_router(pihole_router.main_router)
@@ -204,7 +171,6 @@ async def lifespan(app: FastAPI):
         await publish_to_mqtt(app_config["mqtt"], "true")
     logger.info("Adding Endpoints...")
     yield
-    # Clean up the ML models and release the resources
     if app_config["pihole_control_enabled"]:
         pihole_router.pihole.shutdown()
         pihole_router.all_dns.shutdown()
