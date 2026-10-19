@@ -5,9 +5,8 @@ import sys
 import os
 import logging
 import configparser
-from pprint import pformat
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import aiomqtt
 
@@ -30,8 +29,6 @@ logging.basicConfig(
     force=True,
 )
 
-app_config: dict | None = None
-
 description = """
 FastAPI to manage multiple Pi-holes DNS filtering and Ubiquiti network access controls. 🚀
 
@@ -52,90 +49,66 @@ This API is designed for compatibility with Pi-hole v6 (utilizing `pihole6api`) 
 
 
 def init_config(app, config_location: str = "../etc/config.ini"):
-    global logger
-    global app_config
-    app_config = dict()
-    app_config["default_log_level"] = logging.DEBUG
+    """Load a complete configuration or fail before initializing any clients."""
+    app_config = {"default_log_level": logging.DEBUG, "logger": logger}
     config = configparser.ConfigParser()
-    try:
-        config.read(config_location)
-        logger.info(pformat(config.sections()))
-        for key in [
-            "ubiquiti_control_enabled",
-            "pihole_control_enabled",
-            "mqtt_announce_enabled",
-        ]:
-            temp = config.get("general", key, fallback=False)
-            if temp.lower() in ["yes", "true", "1"]:
-                app_config[key] = True
-            elif temp.lower() in ["no", "false", "0"]:
-                app_config[key] = False
-            else:
-                logger.warning(
-                    f"Unknown boolean value for {key}: {temp}, defaulting to False"
-                )
-                app_config[key] = False
-        if app_config["pihole_control_enabled"]:
-            for area in ["allow_domains", "block_domains"]:
-                app_config[area] = dict()
-                for provider in config.options(area):
-                    app_config[area][provider] = config.get(area, provider).splitlines()
-            app_config["remote_pi_list"] = config.get(
-                "general",
-                "remote_pi_list",
-                fallback=os.environ.get("REMOTE_PI_LIST"),
-            ).split(sep=" ")
+    with open(config_location) as config_file:
+        config.read_file(config_file)
+    if not config.has_section("general"):
+        raise configparser.NoSectionError("general")
 
-            app_config["remote_pi_password"] = config.get(
-                "general",
-                "remote_pi_password",
-                fallback=os.environ.get("REMOTE_PI_PASSWORD"),
-            )
-        if app_config["ubiquiti_control_enabled"]:
-            for i in ["DEVICE", "API_KEY"]:
-                key = "ubiquiti_%s" % (i.lower())
-                app_config[key] = config.get(
-                    "ubiquiti",
-                    f"remote_{key}",
-                    fallback=os.environ.get(f"REMOTE_UBIQUITI_{i}"),
-                )
-            app_config["ubiquiti_targets"] = dict()
-            for provider in config.options("ubiquiti_targets"):
-                app_config["ubiquiti_targets"][provider] = config.get(
-                    "ubiquiti_targets", provider
-                ).splitlines()
-                print(provider)
+    def lines(section, option):
+        return [line.strip() for line in config.get(section, option).splitlines() if line.strip()]
 
-            app_config["ubiquiti_rules"] = dict()
-            for provider in config.options("ubiquiti_rules"):
-                for x in config.get("ubiquiti_rules", provider).splitlines():
-                    app_config["ubiquiti_rules"][x] = {}
-                    logger.debug(f"Enabled{app_config['ubiquiti_rules'][x]} for {x}")
-        if app_config["mqtt_announce_enabled"] and "mqtt" in config.sections():
-            app_config["mqtt"] = dict()
-            app_config["mqtt"]["broker"] = config.get(
-                "mqtt",
-                "broker",
-                fallback=os.environ.get("MQTT_BROKER", "localhost"),
-            )
-            app_config["mqtt"]["port"] = int(
-                config.get(
-                    "mqtt",
-                    "port",
-                    fallback=os.environ.get("MQTT_PORT", "1883"),
-                )
-            )
-            app_config["mqtt"].setdefault("lwt_topics", [])
-            for topic in config.get("mqtt", "lwt_topics").splitlines():
-                if topic:
-                    app_config["mqtt"]["lwt_topics"].append(topic)
-                    logger.debug(
-                        f"Enabled{app_config['mqtt']['lwt_topics']} for {topic}"
-                    )
-            logger.debug(f"MQTT Config: {pformat(app_config['mqtt'])}")
-        app_config["logger"] = logger
-    except configparser.Error as a:
-        logger.error("Couldn't read configs from: %s %s" % (config_location, a))
+    def required(section, option, environment):
+        value = config.get(section, option, fallback=os.environ.get(environment))
+        if value is None or not value.strip():
+            raise ValueError(f"Set [{section}] {option} or {environment}")
+        return value
+
+    for key in (
+        "ubiquiti_control_enabled", "pihole_control_enabled", "mqtt_announce_enabled"
+    ):
+        try:
+            app_config[key] = config.getboolean("general", key, fallback=False)
+        except ValueError:
+            raise ValueError(f"Invalid boolean for [general] {key}") from None
+
+    if app_config["pihole_control_enabled"]:
+        for area in ("allow_domains", "block_domains"):
+            app_config[area] = {name: lines(area, name) for name in config.options(area)}
+        app_config["remote_pi_list"] = required(
+            "general", "remote_pi_list", "REMOTE_PI_LIST"
+        ).split()
+        # An explicitly empty password is valid for a Pi-hole without authentication.
+        password = config.get(
+            "general", "remote_pi_password", fallback=os.environ.get("REMOTE_PI_PASSWORD")
+        )
+        if password is None:
+            raise ValueError("Set [general] remote_pi_password or REMOTE_PI_PASSWORD")
+        app_config["remote_pi_password"] = password
+
+    if app_config["ubiquiti_control_enabled"]:
+        for field in ("DEVICE", "API_KEY"):
+            key = f"ubiquiti_{field.lower()}"
+            app_config[key] = required("ubiquiti", f"remote_{key}", f"REMOTE_UBIQUITI_{field}")
+        app_config["ubiquiti_targets"] = {
+            name: lines("ubiquiti_targets", name) for name in config.options("ubiquiti_targets")
+        }
+        app_config["ubiquiti_rules"] = {
+            rule: {} for name in config.options("ubiquiti_rules")
+            for rule in lines("ubiquiti_rules", name)
+        }
+
+    if app_config["mqtt_announce_enabled"]:
+        mqtt = {
+            "broker": config.get("mqtt", "broker", fallback=os.environ.get("MQTT_BROKER", "localhost")),
+            "port": int(config.get("mqtt", "port", fallback=os.environ.get("MQTT_PORT", "1883"))),
+            "lwt_topics": lines("mqtt", "lwt_topics"),
+        }
+        if not mqtt["broker"].strip() or not 1 <= mqtt["port"] <= 65535 or not mqtt["lwt_topics"]:
+            raise ValueError("MQTT requires a broker, port in 1..65535, and nonempty lwt_topics")
+        app_config["mqtt"] = mqtt
     return app_config
 
 
@@ -159,25 +132,34 @@ async def lifespan(app: FastAPI):
     config_file = os.path.join(os.path.dirname(__file__), "../etc/", "config.ini")
 
     app_config = init_config(app, config_file)
-
-    if app_config["pihole_control_enabled"]:
-        pihole_router.init(app_config)
-        app.include_router(pihole_router.main_router)
-        app.include_router(pihole_router.alldns_router)
-    if app_config["ubiquiti_control_enabled"]:
-        ubiquity.init(app_config)
-        app.include_router(ubiquity.router)
-    if app_config["mqtt_announce_enabled"]:
-        await publish_to_mqtt(app_config["mqtt"], "true")
-    logger.info("Adding Endpoints...")
-    yield
-    if app_config["pihole_control_enabled"]:
-        pihole_router.pihole.shutdown()
-        pihole_router.all_dns.shutdown()
-    if app_config["ubiquiti_control_enabled"]:
-        ubiquity.udm.shutdown()
-    if app_config["mqtt_announce_enabled"]:
-        await publish_to_mqtt(app_config["mqtt"], "false")
+    routes = app.router.routes[:]
+    lifespan_context = app.router.lifespan_context
+    app.openapi_schema = None
+    try:
+        async with AsyncExitStack() as cleanup:
+            # Register first so the offline announcement runs after every client closes,
+            # even when startup or another cleanup callback raises.
+            if app_config["mqtt_announce_enabled"]:
+                cleanup.push_async_callback(publish_to_mqtt, app_config["mqtt"], "false")
+            if app_config["pihole_control_enabled"]:
+                pihole_router.init(app_config)
+                cleanup.callback(pihole_router.pihole.shutdown)
+                cleanup.callback(pihole_router.all_dns.shutdown)
+                app.include_router(pihole_router.main_router)
+                app.include_router(pihole_router.alldns_router)
+            if app_config["ubiquiti_control_enabled"]:
+                ubiquity.init(app_config)
+                cleanup.callback(ubiquity.udm.shutdown)
+                app.include_router(ubiquity.router)
+            if app_config["mqtt_announce_enabled"]:
+                await publish_to_mqtt(app_config["mqtt"], "true")
+            yield
+    finally:
+        # include_router also merges lifespan contexts. Restore both on restart,
+        # including failed startup, and discard the schema for the old configuration.
+        app.router.routes[:] = routes
+        app.router.lifespan_context = lifespan_context
+        app.openapi_schema = None
 
 
 app = FastAPI(
